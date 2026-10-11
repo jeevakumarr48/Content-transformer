@@ -1,0 +1,6 @@
+{
+  "name": "PDL — Personalized Document Lab (TransformIQ)",
+  "description": "AI-powered document adaptation lab that personalizes source documents for targeted audiences, reading levels, tones, and formats while preserving core factual fidelity.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
