@@ -16,11 +16,14 @@ const mammoth = require('mammoth');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || '',
   httpOptions: {
+    timeout: 120_000,
+    retryOptions: { attempts: 1 },
     headers: {
       'User-Agent': 'aistudio-build',
     },
@@ -51,7 +54,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     hasApiKey: !!process.env.GEMINI_API_KEY,
-    model: 'gemini-3.8-flash',
+    model: GEMINI_MODEL,
     platform: 'Content Transformer',
     timestamp: new Date().toISOString(),
   });
@@ -59,6 +62,7 @@ app.get('/api/health', (req, res) => {
 
 // 2. Document Text Extraction Route
 app.post('/api/extract-document', upload.single('document'), async (req, res) => {
+  const extractionStartedAt = performance.now();
   try {
     let extractedText = '';
     let fileName = 'pasted-text.txt';
@@ -149,23 +153,41 @@ app.post('/api/extract-document', upload.single('document'), async (req, res) =>
       error: 'An unexpected server error occurred during document extraction.',
       details: err.message,
     });
+  } finally {
+    console.info(`Document extraction completed in ${(performance.now() - extractionStartedAt).toFixed(0)}ms`);
   }
 });
 
 // Retry helper with exponential backoff for transient model capacity spikes
-async function generateWithRetry(params: any, maxRetries = 3) {
+async function generateWithRetry(params: any, maxRetries = 2) {
   let attempt = 0;
-  while (attempt < maxRetries) {
+  while (attempt <= maxRetries) {
+    const requestStartedAt = performance.now();
     try {
-      return await ai.models.generateContent(params);
+      const response = await ai.models.generateContent(params);
+      console.info(
+        `Gemini request (${params.model}, attempt ${attempt + 1}) completed in ${(performance.now() - requestStartedAt).toFixed(0)}ms`
+      );
+      return response;
     } catch (err: any) {
-      attempt++;
       const errMsg = String(err?.message || err);
-      const isTransient = errMsg.includes('503') || errMsg.includes('429') || errMsg.includes('UNAVAILABLE') || errMsg.includes('RESOURCE_EXHAUSTED');
+      console.warn(
+        `Gemini request (${params.model}, attempt ${attempt + 1}) failed after ${(performance.now() - requestStartedAt).toFixed(0)}ms: ${errMsg}`
+      );
+      const isTransient =
+        errMsg.includes('503') ||
+        errMsg.includes('429') ||
+        errMsg.includes('UNAVAILABLE') ||
+        errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.includes('ETIMEDOUT') ||
+        errMsg.includes('ECONNRESET') ||
+        errMsg.includes('ECONNREFUSED') ||
+        /network|timeout|timed out|abort/i.test(errMsg);
       if (attempt >= maxRetries || !isTransient) {
         throw err;
       }
-      console.warn(`Transient Gemini error (attempt ${attempt}/${maxRetries}): ${errMsg}. Retrying...`);
+      attempt++;
+      console.warn(`Transient Gemini error; retrying (${attempt}/${maxRetries}).`);
       const delay = Math.pow(2, attempt) * 1000 + Math.random() * 500;
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
@@ -197,7 +219,7 @@ app.post('/api/transform', async (req, res) => {
       });
     }
 
-    // Truncate if astronomical, but 3.8-flash has a massive context window (1M tokens)
+    // Truncate if astronomical; the selected model has a large context window.
     const trimmedSource = sourceText.trim();
 
     const systemInstruction = `You are Content Transformer, the intelligent document adaptation engine.
@@ -241,7 +263,7 @@ TRANSFORMATION SPECIFICATIONS:
 Please produce a comprehensive, high-quality transformation adhering strictly to the source material.`;
 
     const response = await generateWithRetry({
-      model: 'gemini-3.8-flash',
+      model: GEMINI_MODEL,
       contents: userPrompt,
       config: {
         systemInstruction,

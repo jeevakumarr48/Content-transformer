@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   FileText,
   AlertCircle,
@@ -42,6 +42,8 @@ export default function App() {
   const [isTransforming, setIsTransforming] = useState<boolean>(false);
   const [transformError, setTransformError] = useState<string | null>(null);
   const [transformStepMessage, setTransformStepMessage] = useState<string>('');
+  const transformationInProgress = useRef(false);
+  const lastTransformation = useRef<{ key: string; result: TransformationResult } | null>(null);
 
   // Modals State
   const [showMethodology, setShowMethodology] = useState<boolean>(false);
@@ -76,8 +78,17 @@ export default function App() {
 
   // Execute AI Transformation
   const handleExecuteTransformation = async () => {
-    if (!sourceText.trim()) return;
+    if (!sourceText.trim() || transformationInProgress.current) return;
 
+    const payload = { sourceText: sourceText.trim(), ...options };
+    const requestKey = JSON.stringify(payload);
+    if (lastTransformation.current?.key === requestKey) {
+      setResult(lastTransformation.current.result);
+      setTransformError(null);
+      return;
+    }
+
+    transformationInProgress.current = true;
     setIsTransforming(true);
     setTransformError(null);
     setTransformStepMessage('Reviewing document facts and structure...');
@@ -95,19 +106,19 @@ export default function App() {
       const response = await fetch('/api/transform', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourceText,
-          ...options,
-        }),
+        body: JSON.stringify(payload),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
 
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Transformation failed on the server.');
+      if (!response.ok || !data?.success) {
+        const error = data?.error || 'Transformation failed on the server.';
+        const details = data?.details;
+        throw new Error(details && details !== error ? `${error} (${details})` : error);
       }
 
       setResult(data.result);
+      lastTransformation.current = { key: requestKey, result: data.result };
       setTimeout(() => {
         window.scrollTo({ top: 480, behavior: 'smooth' });
       }, 100);
@@ -117,6 +128,7 @@ export default function App() {
     } finally {
       clearInterval(stepInterval);
       setIsTransforming(false);
+      transformationInProgress.current = false;
     }
   };
 

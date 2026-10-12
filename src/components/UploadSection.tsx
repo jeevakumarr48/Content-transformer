@@ -31,9 +31,12 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
   const [dragOver, setDragOver] = useState(false);
   const [extractionError, setExtractionError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const extractionInProgress = useRef(false);
 
   // File upload handler
   const handleFileUpload = async (file: File) => {
+    if (extractionInProgress.current) return;
+    extractionInProgress.current = true;
     setExtractionError(null);
     setIsExtracting(true);
 
@@ -65,6 +68,7 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
       setExtractionError(err.message || 'Error processing document.');
     } finally {
       setIsExtracting(false);
+      extractionInProgress.current = false;
     }
   };
 
@@ -75,7 +79,9 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
       setExtractionError('Please paste or enter some text before continuing.');
       return;
     }
+    if (extractionInProgress.current) return;
 
+    extractionInProgress.current = true;
     setExtractionError(null);
     setIsExtracting(true);
 
@@ -108,6 +114,7 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
       setExtractionError(err.message || 'Error processing pasted text.');
     } finally {
       setIsExtracting(false);
+      extractionInProgress.current = false;
     }
   };
 
